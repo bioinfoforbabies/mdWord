@@ -1,0 +1,380 @@
+---
+title: "Environmental filtering structures microbial communities"
+subtitle: "A reproducible R Markdown manuscript demo"
+author: "Your Name"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+abstract: |
+  This demonstration shows how a single R Markdown file can combine scientific prose, live citations, equations, reproducible analysis, and publication-quality figures in a polished Microsoft Word manuscript. The biological data are simulated, but the cited literature is real. The example asks how an environmental gradient can shape microbial alpha diversity and community composition.
+output:
+  rmarkdown::word_document:
+    reference_docx: premium_manuscript_reference_v2.docx
+    fig_caption: true
+    toc: false
+    keep_md: true
+bibliography: "`r rbbt::bbt_write_bib('bibliography.json', overwrite = TRUE)`"
+link-citations: true
+reference-section-title: References
+---
+
+
+```{r setup, include=FALSE, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  dpi = 300
+)
+
+# Install once if needed:
+# install.packages(c("tidyverse", "patchwork", "vegan"))
+
+library(tidyverse)
+library(patchwork)
+library(vegan)
+
+set.seed(2026)
+```
+
+# Introduction
+
+
+Amplicon sequencing has made it possible to profile microbial communities at high taxonomic resolution, and denoising approaches such as DADA2 can infer exact amplicon sequence variants rather than relying only on fixed similarity clusters. The ecological signal, however, still depends strongly on the environment. Across soils, pH has repeatedly emerged as a major correlate of bacterial diversity and community structure [@Cai; @Chend].
+
+
+
+A useful manuscript therefore needs to connect **ecological reasoning**, **quantitative summaries**, and **transparent code**. Diversity can be expressed using Shannon entropy, while among-sample compositional differences are often summarized using dissimilarity measures such as Bray-Curtis. In this demo, we use simulated community data to illustrate the full reporting workflow without pretending that the generated values are empirical observations.
+
+> **Demo-data note.** Every biological measurement below is simulated for document-design and reproducible-reporting practice. The references are real publications.
+
+## Quantities used in the analysis
+
+For sample $i$, the relative abundance of taxon $j$ is
+
+$$
+p_{ij} = \frac{x_{ij}}{\sum_{j=1}^{S} x_{ij}},
+$$
+
+where $x_{ij}$ is the observed count and $S$ is the number of taxa. Shannon diversity is then
+
+$$
+H'_i = -\sum_{j=1}^{S} p_{ij}\ln(p_{ij}).
+$$
+
+To allow a curved response of diversity to pH, we fit a simple quadratic model,
+
+$$
+H'_i = \beta_0 + \beta_1\,\mathrm{pH}_i + \beta_2\,\mathrm{pH}_i^2 + \varepsilon_i.
+$$
+
+# Methods
+
+## Simulated microbial community
+
+The following chunk creates 72 samples across three habitats. Twelve simulated taxa have different pH optima, producing a realistic-looking but entirely artificial environmental gradient.
+
+This simulated dataset is designed to demonstrate a typical ecological analysis workflow without relying on external files. Each sample contains environmental metadata, including habitat identity and pH, together with abundance values for a set of artificial microbial taxa. Taxon abundances respond differently along the pH gradient, creating variation in richness, diversity, and community composition among samples. Because the data are generated within the document, the analysis is fully reproducible: every time the manuscript is knitted with the same random seed, the same results are obtained. This makes the example useful for testing code, figures, equations, citations, and document formatting together.
+
+```{r simulate-data, echo=FALSE, message=FALSE, warning=FALSE}
+n_per_habitat <- 24
+
+meta <- tibble(
+  sample_id = sprintf("S%02d", 1:(3 * n_per_habitat)),
+  habitat = factor(
+    rep(c("Wetland", "Lake", "Soil"), each = n_per_habitat),
+    levels = c("Wetland", "Lake", "Soil")
+  ),
+  pH = c(
+    rnorm(n_per_habitat, 6.4, 0.55),
+    rnorm(n_per_habitat, 7.5, 0.45),
+    rnorm(n_per_habitat, 5.7, 0.65)
+  )
+) |>
+  mutate(pH = pmin(pmax(pH, 4.2), 8.5))
+
+taxa_names <- sprintf("ASV_%02d", 1:12)
+taxon_optima <- seq(4.8, 8.2, length.out = length(taxa_names))
+base_abundance <- runif(length(taxa_names), 55, 145)
+
+taxa_mat <- vapply(seq_along(taxa_names), function(j) {
+  mu <- base_abundance[j] *
+    exp(-((meta$pH - taxon_optima[j])^2) / (2 * 0.85^2)) + 1.5
+  rnbinom(nrow(meta), mu = mu, size = 3)
+}, numeric(nrow(meta)))
+
+colnames(taxa_mat) <- taxa_names
+rownames(taxa_mat) <- meta$sample_id
+
+meta <- meta |>
+  mutate(
+    richness = rowSums(taxa_mat > 2),
+    shannon = vegan::diversity(taxa_mat, index = "shannon")
+  )
+
+model_diversity <- lm(shannon ~ pH + I(pH^2), data = meta)
+model_summary <- summary(model_diversity)
+model_f <- model_summary$fstatistic
+model_p <- pf(model_f[1], model_f[2], model_f[3], lower.tail = FALSE)
+```
+
+## Figure construction
+
+A single visual style is defined once and reused across three different plot types: a scatter/regression plot, a boxplot with raw observations, and a stacked composition bar chart. The individual plots are stored as `p1`, `p2`, and `p3`, so their appearance and their page arrangement can be controlled independently.
+
+```{r build-plots, echo=FALSE, message=FALSE, warning=FALSE}
+navy <- "#16324A"
+teal <- "#2B7A78"
+slate <- "#65727E"
+ink <- "#26333F"
+grid <- "#E9EDF0"
+panel_bg <- "#FBFCFC"
+
+habitat_cols <- c(
+  "Wetland" = "#2B7A78",
+  "Lake"    = "#557EA8",
+  "Soil"    = "#B5825A"
+)
+
+taxon_cols <- c(
+  "ASV_01" = "#D3785C",
+  "ASV_02" = "#D3A451",
+  "ASV_03" = "#92A85B",
+  "ASV_04" = "#4E9A7A",
+  "ASV_05" = "#4D91A8",
+  "ASV_06" = "#6D79B5",
+  "ASV_07" = "#8A6FB1",
+  "ASV_08" = "#B36D9B",
+  "ASV_09" = "#C77B86",
+  "ASV_10" = "#A37B60",
+  "ASV_11" = "#87909A",
+  "ASV_12" = "#6E8E8D",
+  "Other"  = "#D9DEE2"
+)
+
+theme_manuscript <- theme_minimal(base_family = "sans", base_size = 9.5) +
+  theme(
+    plot.background = element_rect(fill = "white", colour = NA),
+    panel.background = element_rect(fill = panel_bg, colour = NA),
+    plot.title = element_text(
+      face = "bold", colour = navy, size = 10.8,
+      margin = margin(b = 2)
+    ),
+    plot.subtitle = element_text(
+      colour = slate, size = 8.1,
+      margin = margin(b = 7)
+    ),
+    plot.title.position = "plot",
+    axis.title = element_text(colour = navy, size = 8.5),
+    axis.text = element_text(colour = ink, size = 7.8),
+    axis.ticks = element_line(colour = "#AAB3BA", linewidth = 0.35),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(colour = grid, linewidth = 0.35),
+    legend.title = element_blank(),
+    legend.text = element_text(colour = ink, size = 7.4),
+    legend.key.height = grid::unit(0.35, "cm"),
+    legend.key.width = grid::unit(0.42, "cm"),
+    plot.margin = margin(9, 10, 8, 9)
+  )
+
+p1 <- ggplot(meta, aes(pH, shannon, colour = habitat)) +
+  geom_point(size = 2.0, alpha = 0.78) +
+  geom_smooth(
+    aes(group = 1),
+    method = "lm",
+    formula = y ~ poly(x, 2, raw = TRUE),
+    se = TRUE,
+    colour = navy,
+    fill = "#DDE8EE",
+    linewidth = 0.8,
+    alpha = 0.65
+  ) +
+  scale_colour_manual(values = habitat_cols) +
+  labs(
+    title = "Environmental response",
+    subtitle = "Shannon diversity across the pH gradient",
+    x = "pH",
+    y = "Shannon diversity"
+  ) +
+  theme_manuscript +
+  theme(legend.position = "bottom")
+
+p2 <- ggplot(meta, aes(habitat, richness, fill = habitat)) +
+  geom_boxplot(
+    width = 0.55,
+    outlier.shape = NA,
+    alpha = 0.90,
+    colour = navy,
+    linewidth = 0.45
+  ) +
+  geom_jitter(
+    width = 0.10,
+    size = 1.25,
+    alpha = 0.48,
+    colour = ink
+  ) +
+  scale_fill_manual(values = habitat_cols) +
+  labs(
+    title = "Habitat contrast",
+    subtitle = "Observed richness in simulated samples",
+    x = NULL,
+    y = "Taxa detected"
+  ) +
+  theme_manuscript +
+  theme(legend.position = "none")
+
+composition <- as_tibble(taxa_mat, rownames = "sample_id") |>
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "count") |>
+  left_join(select(meta, sample_id, habitat), by = "sample_id") |>
+  group_by(habitat, taxon) |>
+  summarise(count = sum(count), .groups = "drop") |>
+  group_by(habitat) |>
+  mutate(relative_abundance = count / sum(count)) |>
+  ungroup()
+
+top_taxa <- composition |>
+  group_by(taxon) |>
+  summarise(total = sum(count), .groups = "drop") |>
+  slice_max(total, n = 6) |>
+  pull(taxon)
+
+composition_plot <- composition |>
+  mutate(taxon_plot = if_else(taxon %in% top_taxa, taxon, "Other")) |>
+  group_by(habitat, taxon_plot) |>
+  summarise(relative_abundance = sum(relative_abundance), .groups = "drop") |>
+  mutate(taxon_plot = factor(
+    taxon_plot,
+    levels = c(sort(top_taxa), "Other")
+  ))
+
+p3 <- ggplot(
+  composition_plot,
+  aes(habitat, relative_abundance, fill = taxon_plot)
+) +
+  geom_col(width = 0.64, colour = "white", linewidth = 0.18) +
+  scale_fill_manual(values = taxon_cols, drop = FALSE) +
+  scale_y_continuous(
+    labels = scales::label_percent(accuracy = 1),
+    expand = expansion(mult = c(0, 0.02))
+  ) +
+  labs(
+    title = "Community composition",
+    subtitle = "Mean relative abundance by habitat",
+    x = NULL,
+    y = "Relative abundance"
+  ) +
+  theme_manuscript +
+  theme(
+    legend.position = "right",
+    panel.grid.major.y = element_line(colour = grid, linewidth = 0.30)
+  )
+
+plot_list <- list(p1, p2, p3)
+```
+
+## One set of plots, several layouts
+
+The code below is deliberately visible. It demonstrates that the plots themselves do not need to be rewritten. `patchwork` can arrange the same plot objects automatically or according to a short layout specification.
+
+```{r layout-code-demo, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+# Without patchwork: each ggplot is an independent Word figure
+p1
+p2
+p3
+
+# Let patchwork choose a compact grid automatically
+auto_grid <- patchwork::wrap_plots(plot_list)
+
+# Force all three panels into one wide row
+wide_row <- patchwork::wrap_plots(plot_list, nrow = 1)
+
+# Give one result more visual weight
+feature_layout <- p1 | (p2 / p3)
+feature_layout <- feature_layout +
+  patchwork::plot_layout(widths = c(1.45, 1))
+
+# Stack all panels for a narrow page
+portrait_layout <- patchwork::wrap_plots(plot_list, ncol = 1)
+```
+
+The examples below render the same three plots at different device dimensions. `fig.width` and `fig.height` control the size and aspect ratio of the generated figure, while `plot_layout()` or `wrap_plots()` controls how the panels share that space.
+
+### Individual plots without patchwork
+
+If the plots are printed directly, Word receives three independent figures. This is useful when each result needs its own caption, discussion, or placement rather than a single multi-panel figure.
+
+```{r render-individual-plots, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6.2, fig.height=3.7, out.width="82%"}
+p1
+p2
+p3 + theme(legend.position = "bottom")
+```
+
+The three figures above are ordinary `ggplot2` outputs. Nothing has been stitched together; each plot remains an independent object in the Word document.
+
+### Automatic balanced grid
+
+With no row or column count specified, `wrap_plots()` chooses a compact grid.
+
+```{r render-auto-grid, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6.4, fig.height=5.0, out.width="92%", fig.cap="Automatic layout. Patchwork chooses a compact arrangement for the three reusable plot objects."}
+auto_grid <- patchwork::wrap_plots(plot_list) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(face = "bold", colour = navy, size = 11))
+
+auto_grid
+```
+
+### Wide manuscript figure
+
+A wider, shallower graphics device gives each panel equal horizontal space.
+
+```{r render-wide-row, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.4, fig.height=2.9, out.width="96%", fig.cap="Wide layout. The same three plots are arranged in a single row."}
+wide_row <- patchwork::wrap_plots(plot_list, nrow = 1) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(face = "bold", colour = navy, size = 11))
+
+wide_row
+```
+
+### Asymmetric feature figure
+
+Relative widths can make one result visually dominant while the other panels remain supporting evidence.
+
+```{r render-feature-layout, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.1, fig.height=4.8, out.width="94%", fig.cap="Asymmetric layout. The environmental-response panel is larger, with two supporting panels stacked beside it."}
+feature_layout <- p1 | (p2 / p3)
+
+feature_layout +
+  plot_layout(widths = c(1.45, 1)) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(face = "bold", colour = navy, size = 11))
+```
+
+### Portrait figure
+
+For a narrower page, the three plots can instead be stacked vertically without changing any of the individual plotting code.
+
+```{r render-portrait-layout, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5.2, fig.height=7.7, out.width="72%", fig.cap="Portrait layout. The three reusable panels are stacked vertically for a narrower figure."}
+portrait_layout <- patchwork::wrap_plots(plot_list, ncol = 1) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(face = "bold", colour = navy, size = 11))
+
+portrait_layout
+```
+
+For Microsoft Word output, figure alignment is intentionally left to the Word/reference-DOCX styling. Figure sizing is handled with `fig.width`, `fig.height`, and `out.width`.
+
+# Results
+
+The simulated dataset contains `r nrow(meta)` samples spanning `r length(levels(meta$habitat))` habitats. Mean Shannon diversity was `r sprintf("%.2f", mean(meta$shannon))`, and the quadratic pH model explained `r sprintf("%.1f", 100 * model_summary$r.squared)`% of the variation in Shannon diversity ($P$ = `r format.pval(model_p, digits = 2)`). These values are generated during knitting, so the text updates automatically whenever the simulation or analysis changes.
+
+The stitched figure demonstrates three roles that graphics often play in a manuscript. Panel A communicates a continuous environmental relationship, panel B emphasizes the distribution of an ecological summary across groups, and panel C shows how the underlying community composition changes. Keeping all three panels in one `patchwork` object ensures that the exported Word figure remains a single, consistently sized manuscript figure.
+
+# Discussion
+
+<!-- REF PLACEHOLDER: environmental filtering / pH-microbiome literature -->
+This document is intentionally compact, but it contains the core components of a reproducible scientific manuscript: literature-backed motivation, mathematical definitions, executable code, inline statistical results, a multi-panel figure, and an automatically generated reference list. The simulated pH-diversity pattern was chosen because large observational studies have reported strong associations between soil pH and bacterial diversity or composition [@Mikhailov; @Duperron]. It should nevertheless be treated only as a visual and reporting example, not as a reanalysis of those studies.
+
+For a real project, replace the simulation chunk with your imported metadata and ASV/OTU table. The manuscript structure, equations, plot theme, figure assembly, inline results, and citation workflow can remain unchanged.
+
+@Heb  
+(@Heb)  
+[@Heb]  
+
